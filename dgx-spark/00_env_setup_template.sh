@@ -18,3 +18,8 @@ export SPARK_USER="your-username"
 # Relative paths starting with '~' are supported.
 # Example: ~/.ssh/id_rsa
 export SSH_KEY_PATH="~/.ssh/id_rsa"
+
+# Path to the private SSH key to upload.
+# The public key (private_key_path.pub) will also be uploaded automatically.
+# Example: ~/.ssh/id_rsa or ~/.ssh/id_ed25519
+export UPLOAD_PRIVATE_KEY_PATH="~/.ssh/your_private_key_filename"
