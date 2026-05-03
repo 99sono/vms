@@ -1,0 +1,4 @@
+# Ignore private environment setup scripts
+*_private.sh
+*private.sh
+00_env_setup_private.sh
