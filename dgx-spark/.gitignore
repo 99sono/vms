@@ -1,0 +1,2 @@
+# Ignore downloaded SSL certificate files
+*.crt

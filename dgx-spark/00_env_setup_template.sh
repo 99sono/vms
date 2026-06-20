@@ -6,12 +6,11 @@ set -euo pipefail
 # USAGE: Copy this file to 00_env_setup_private.sh and fill in your actual details.
 # This file serves as a blueprint and can be safely committed to source control.
 
-# The hostname or IP address of the DGX Spark VM.
-# Example: hostname.local
-export SPARK_HOST="spark-hostname.local"
+# Hostnames/IPs for each Spark node.
+export SPARK01_HOST="spark01-hostname.local"
+export SPARK02_HOST="spark02-hostname.local"
 
-# Your username on the DGX Spark VM.
-# Example: johndoe
+# Your username on the DGX Spark VMs.
 export SPARK_USER="your-username"
 
 # Path to your local SSH private key.
