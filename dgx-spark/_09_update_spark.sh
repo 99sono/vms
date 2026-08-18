@@ -1,14 +1,14 @@
 #!/bin/bash
 # ==============================================================================
 # Shared system-update logic — sourced by 09_a_* and 09_b_*.
-# Uploads the remote update script to the Spark, then runs it interactively.
+# Syncs the whole maintenance/ folder to the Spark, then runs the update script.
 # ==============================================================================
 REMOTE_DIR="~/scripts/maintenance"
 REMOTE_SCRIPT="01_update_spark.sh"
-LOCAL_SCRIPT_PATH="$SCRIPT_DIR/maintenance/$REMOTE_SCRIPT"
 
-if [ ! -f "$LOCAL_SCRIPT_PATH" ]; then
-    echo "Error: Remote update script not found at $LOCAL_SCRIPT_PATH" >&2
+# The update script must exist locally (it is what we will execute).
+if [ ! -f "$SCRIPT_DIR/maintenance/$REMOTE_SCRIPT" ]; then
+    echo "Error: Remote update script not found at $SCRIPT_DIR/maintenance/$REMOTE_SCRIPT" >&2
     exit 1
 fi
 
@@ -27,7 +27,7 @@ echo "  Script:    maintenance/$REMOTE_SCRIPT"
 echo "  SSH key:   $EXPANDED_KEY_PATH"
 echo ""
 echo "  Actions:"
-echo "    1. Upload $REMOTE_SCRIPT to $REMOTE_DIR/"
+echo "    1. Sync the whole maintenance/ folder to $REMOTE_DIR/"
 echo "    2. Run: apt update → dist-upgrade → fwupdmgr → reboot"
 echo ""
 echo "  NOTE: Your SSH session will drop when the system reboots."
@@ -42,12 +42,8 @@ case "$response" in
         ;;
 esac
 
-# --- Upload the remote script ---
-echo "  Uploading $REMOTE_SCRIPT to $SPARK_HOST..."
-ssh -i "$EXPANDED_KEY_PATH" "$SPARK_USER@$SPARK_HOST" "mkdir -p $REMOTE_DIR"
-scp -i "$EXPANDED_KEY_PATH" "$LOCAL_SCRIPT_PATH" "$SPARK_USER@$SPARK_HOST:$REMOTE_DIR/$REMOTE_SCRIPT"
-ssh -i "$EXPANDED_KEY_PATH" "$SPARK_USER@$SPARK_HOST" "chmod +x $REMOTE_DIR/$REMOTE_SCRIPT"
-echo "  Upload complete."
+# --- Sync the maintenance folder (single source of truth) ---
+upload_maintenance_dir
 echo ""
 
 # --- Execute remotely (with TTY for interactive prompts) ---

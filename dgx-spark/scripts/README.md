@@ -53,21 +53,75 @@ and persist between runs.
 
 **Usage:**
 - **Do NOT run directly.** It is uploaded and executed by
-  `../09_a_update_spark01.sh` / `../09_b_update_spark02.sh`.
+  `../09_a_update_spark01.sh` / `../09_b_update_spark02.sh` (which sync the whole
+  `maintenance/` folder first). You can also sync the folder on its own without
+  executing, via `../10_a_sync_maintenance_to_spark01.sh` / `../10_b_...`.
 - Prompts before starting and before rebooting.
+
+### `02_cap_gpu_clock.sh`
+
+**Purpose:** Thermal control for the GB10. Caps the GPU graphics clock to keep the
+package cooler under sustained inference load, with near-zero performance loss
+(LLM decode is memory-bandwidth-bound).
+
+**Usage (on the Spark, or over `ssh`):**
+- `bash 02_cap_gpu_clock.sh [apply|reset|status] [MHz]`
+- `apply` (default): `nvidia-smi -lgc 2200,2200` — caps max graphics clock to
+  2200 MHz (default; override with a second arg). Non-persistent.
+- `reset`: `nvidia-smi -rgc` — restores factory clocking.
+- `status`: shows current + max graphics clocks and driver version.
+
+No systemd unit is created here — persistence is a separate, explicit step (`03`).
+
+### `03_persist_gpu_clock_cap.sh`
+
+**Purpose:** Makes the clock cap from `02` survive reboots by installing the
+`systemd/nvidia-clock-cap.service` unit.
+
+**Usage (on the Spark, as root or with `sudo`):**
+- `bash 03_persist_gpu_clock_cap.sh [install|uninstall|status] [MHz]`
+- `install` (default): copies the unit to `/etc/systemd/system/`, enables +
+  starts it (applies the cap immediately). Idempotent — re-running with a new
+  MHz updates the `ExecStart` and reloads.
+- `uninstall`: stops, disables, and removes the unit.
+- `status`: reports whether the unit is installed / enabled / active.
+
+### `04_audit_gpu_clock_cap.sh`
+
+**Purpose:** Verifies the persistence setup is healthy and the cap is actually in
+effect. Safe to run anytime (no changes made).
+
+**Usage (on the Spark, or over `ssh`):**
+- `bash 04_audit_gpu_clock_cap.sh [MHz]`
+- Checks: unit present, enabled, active, `ExecStart` value, and the live
+  `clocks.max.graphics` / `clocks.current.graphics`.
+- Exit codes: `0` = healthy, `1` = degraded (unit missing/disabled/inactive or
+  cap not detected), `2` = broken (nvidia-smi missing or clock query failed).
+
+### `systemd/nvidia-clock-cap.service`
+
+**Purpose:** Static `Oneshot` systemd unit that applies the clock cap at boot.
+Installed by `03` — **do not edit by hand on the Spark**; edit it here, re-sync
+with `../10_*`, and re-run `03 install`.
 
 ## Architecture
 
 ```
 dgx-spark/
 ├── 05_a_disable_password_auth_on_spark01.sh  ← local wrapper (SCP/SSH, confirmation)
-├── 09_a_update_spark01.sh                    ← local wrapper (SCP/SSH, confirmation)
-├── _common.sh                                ← resolves target Spark from filename
+├── 09_a_update_spark01.sh                    ← local wrapper (syncs maintenance/ + runs 01)
+├── 10_a_sync_maintenance_to_spark01.sh       ← local wrapper (syncs maintenance/, no execution)
+├── _common.sh                                ← resolves Spark + provides upload_maintenance_dir()
 ├── scripts/
-│   ├── README.md                 ← you are here
-│   └── disable_passwords.sh      ← remote, one-off (runs on the VM)
+│   ├── README.md                   ← you are here
+│   └── disable_passwords.sh        ← remote, one-off (runs on the VM)
 └── maintenance/
-    └── 01_update_spark.sh        ← remote, recurring (runs on the VM)
+    ├── 01_update_spark.sh          ← remote, recurring (full OS + firmware update)
+    ├── 02_cap_gpu_clock.sh         ← remote, recurring (thermal clock cap)
+    ├── 03_persist_gpu_clock_cap.sh ← remote, recurring (install/uninstall systemd unit)
+    ├── 04_audit_gpu_clock_cap.sh   ← remote, recurring (verify persistence + live cap)
+    └── systemd/
+        └── nvidia-clock-cap.service ← static unit, copied by 03
 ```
 
 ## Naming conventions

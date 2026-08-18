@@ -16,8 +16,13 @@ This repository is used to keep track of Virtual Machines (VMs), providing a cen
   - `07_a_upload_ssh_keys_to_spark01.sh` / `07_b_...`: Upload additional SSH key pairs.
   - `08_a_download_cert_from_spark01.sh` / `08_b_...`: Download the nginx self-signed cert.
   - `09_a_update_spark01.sh` / `09_b_update_spark02.sh`: Full OS + firmware update (see below).
+  - `10_a_sync_maintenance_to_spark01.sh` / `10_b_...`: Sync the whole `maintenance/` folder to the Spark (upload only, no execution).
   - `maintenance/`: Remote-side scripts that get uploaded to the Spark and executed there.
     - `01_update_spark.sh`: The full DGX Spark update sequence (apt + firmware + reboot).
+    - `02_cap_gpu_clock.sh`: Cap/reset/status the GPU graphics clock for thermal control (see below).
+    - `03_persist_gpu_clock_cap.sh`: Install/remove the systemd unit so the clock cap survives reboots.
+    - `04_audit_gpu_clock_cap.sh`: Verify the unit is installed/enabled/active and the cap is in effect.
+    - `systemd/nvidia-clock-cap.service`: Static unit copied by `03` (never hand-edited with `nano`).
 
 ### Naming convention
 
@@ -68,4 +73,48 @@ sudo reboot                # prompts for confirmation
 modules are compiled into the custom kernel and must be upgraded atomically.
 The script prompts before executing and before rebooting. After the reboot your
 SSH session drops (expected) — reconnect in ~2–5 minutes.
+
+### Syncing maintenance scripts
+
+```bash
+cd dgx-spark
+./10_a_sync_maintenance_to_spark01.sh   # for spark01
+# or
+./10_b_sync_maintenance_to_spark02.sh   # for spark02
+```
+
+Uploads the **entire** `maintenance/` folder to `~/scripts/maintenance/` on the
+target Spark. This is upload-only — it does not run anything. (Running `09_*` to
+update a Spark also syncs the folder first, so `09` and `10` never drift apart.)
+After syncing, run what you need over SSH, e.g.:
+
+```bash
+ssh sono99@spark01 'bash ~/scripts/maintenance/02_cap_gpu_clock.sh status'
+```
+
+### GPU thermal control (clock cap)
+
+The DGX Spark (GB10) shares one thermal budget between CPU and GPU. Under
+sustained inference load it can spike past 96°C and hard power-off. Capping the
+GPU graphics clock at 2200 MHz (from the ~2455 MHz peak) cuts package power by
+>30% and cools the chip ~6–10°C, with essentially no loss of tokens/second
+(LLM decode is memory-bandwidth-bound, not compute-bound).
+
+```bash
+# 1. Upload the maintenance folder to the Spark (once)
+./10_a_sync_maintenance_to_spark01.sh
+
+# 2. On the Spark (or over ssh):
+bash ~/scripts/maintenance/02_cap_gpu_clock.sh apply      # cap now (non-persistent)
+bash ~/scripts/maintenance/02_cap_gpu_clock.sh status     # check current clocks
+bash ~/scripts/maintenance/02_cap_gpu_clock.sh reset      # back to factory clocking
+
+# 3. Make the cap survive reboots (installs the systemd unit):
+bash ~/scripts/maintenance/03_persist_gpu_clock_cap.sh install
+
+# 4. Verify unit is installed + enabled + active and the cap is in effect:
+bash ~/scripts/maintenance/04_audit_gpu_clock_cap.sh
+```
+
+See `maintenance/02_cap_gpu_clock.sh` for the full rationale and references.
 

@@ -1,0 +1,16 @@
+[Unit]
+Description=Cap NVIDIA GPU Clock for DGX Spark Thermals
+Documentation=file:///home/sono99/scripts/maintenance/02_cap_gpu_clock.sh
+# Apply the cap only after the NVIDIA driver / persistence daemon is up.
+After=nvidia-persistenced.service
+Wants=nvidia-persistenced.service
+
+[Service]
+Type=oneshot
+# Cap the max graphics clock to 2200 MHz (see 02_cap_gpu_clock.sh for the why).
+# NOTE: 03_persist_gpu_clock_cap.sh verifies this path before installing.
+ExecStart=/usr/bin/nvidia-smi -lgc 0,2200
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

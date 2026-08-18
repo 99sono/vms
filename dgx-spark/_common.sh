@@ -36,3 +36,34 @@ load_env_and_resolve_host() {
 
     EXPANDED_KEY_PATH="${SSH_KEY_PATH/#\~/$HOME}"
 }
+
+# ------------------------------------------------------------------------------
+# upload_maintenance_dir
+#   Uploads the ENTIRE local dgx-spark/maintenance/ folder to
+#   ~/scripts/maintenance/ on the target Spark (mkdir -> scp -r -> chmod +x).
+#   Must be called AFTER load_env_and_resolve_host so that SPARK_HOST,
+#   SPARK_USER, EXPANDED_KEY_PATH and SCRIPT_DIR are set.
+#   This is the single source of truth for syncing maintenance scripts.
+# ------------------------------------------------------------------------------
+upload_maintenance_dir() {
+    local src_dir="$SCRIPT_DIR/maintenance"
+    local dest_dir="~/scripts/maintenance"
+
+    if [ ! -d "$src_dir" ]; then
+        echo "Error: Local maintenance directory not found at $src_dir" >&2
+        return 1
+    fi
+
+    if [ ! -f "$EXPANDED_KEY_PATH" ]; then
+        echo "Error: SSH private key not found at $EXPANDED_KEY_PATH" >&2
+        return 1
+    fi
+
+    echo "  Syncing maintenance/ -> $SPARK_USER@$SPARK_HOST:$dest_dir"
+    ssh -i "$EXPANDED_KEY_PATH" "$SPARK_USER@$SPARK_HOST" "mkdir -p $dest_dir"
+    # 'src_dir/.' uploads the *contents* of the folder (no nested maintenance/).
+    scp -i "$EXPANDED_KEY_PATH" -r "$src_dir/." "$SPARK_USER@$SPARK_HOST:$dest_dir/"
+    ssh -i "$EXPANDED_KEY_PATH" "$SPARK_USER@$SPARK_HOST" "chmod +x $dest_dir/*.sh"
+    echo "  Sync complete."
+}
+
