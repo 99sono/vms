@@ -4,19 +4,68 @@ This repository is used to keep track of Virtual Machines (VMs), providing a cen
 
 ## Structure
 
-- `dgx-spark/`: Scripts and templates for the DGX Spark VM.
+- `dgx-spark/`: Scripts and templates for the DGX Spark VMs (spark01 / spark02).
   - `00_env_setup_template.sh`: Template for environment variables (host, user, SSH key path).
   - `00_env_setup_private.sh`: Private file (ignored by Git) containing actual credentials.
-  - `01_ssh_to_dgx_spark.sh`: Opens an interactive SSH session to the DGX Spark VM.
-  - `02_upload_ssh_key.sh`: Uploads your SSH public key to the VM for passwordless login.
-  - `03_upload_to_spark.sh`: Uploads a local file or directory to the VM's Downloads folder.
-  - `04_download_from_spark.sh`: Downloads a file or directory from the VM to your local machine.
+  - `01_a_ssh_to_dgx_spark01.sh` / `01_b_ssh_to_dgx_spark02.sh`: Open an interactive SSH session.
+  - `02_a_upload_ssh_key_to_spark01.sh` / `02_b_...`: Upload your SSH public key for passwordless login.
+  - `03_a_upload_to_spark01.sh` / `03_b_...`: Upload a local file or directory to the VM.
+  - `04_a_download_from_spark01.sh` / `04_b_...`: Download a file or directory from the VM.
+  - `05_a_disable_password_auth_on_spark01.sh` / `05_b_...`: Harden SSH (disable password auth).
+  - `06_a_upload_gitconfig_to_spark01.sh` / `06_b_...`: Upload your `.gitconfig`.
+  - `07_a_upload_ssh_keys_to_spark01.sh` / `07_b_...`: Upload additional SSH key pairs.
+  - `08_a_download_cert_from_spark01.sh` / `08_b_...`: Download the nginx self-signed cert.
+  - `09_a_update_spark01.sh` / `09_b_update_spark02.sh`: Full OS + firmware update (see below).
+  - `maintenance/`: Remote-side scripts that get uploaded to the Spark and executed there.
+    - `01_update_spark.sh`: The full DGX Spark update sequence (apt + firmware + reboot).
+
+### Naming convention
+
+Every user-facing script comes in **A/B pairs**:
+
+| Suffix | Target  |
+|--------|---------|
+| `_a_`  | spark01 |
+| `_b_`  | spark02 |
+
+Each wrapper sources `_common.sh` (which resolves the target host from the filename)
+and a shared `_NN_*.sh` module that contains the actual logic.
+Remote scripts that run **on** the Spark live in `dgx-spark/scripts/` (one-off)
+or `dgx-spark/maintenance/` (recurring maintenance).
 
 ## Setup
 
-1. Copy the `00_env_setup_template.sh` in the `dgx-spark/` folder to `00_env_setup_private.sh`.
-2. Fill in the actual hostname, username, and SSH key path in `00_env_setup_private.sh`.
-3. Use the numbered scripts in order:
-   - **Step 1**: `./01_ssh_to_dgx_spark.sh` — Connect to the VM for the first time.
-   - **Step 2**: `./02_upload_ssh_key.sh` — Upload your SSH public key for passwordless login.
-   - **Steps 3–4**: Use `03` and `04` to transfer files to/from the VM as needed.
+1. Copy `00_env_setup_template.sh` in `dgx-spark/` to `00_env_setup_private.sh`.
+2. Fill in the actual hostnames, username, and SSH key path.
+3. Use the numbered scripts in order for initial setup:
+   - **Step 1**: `./01_a_ssh_to_dgx_spark01.sh` — Connect for the first time.
+   - **Step 2**: `./02_a_upload_ssh_key_to_spark01.sh` — Upload your SSH key.
+   - **Steps 3–4**: Use `03` / `04` to transfer files as needed.
+   - **Step 5**: `./05_a_disable_password_auth_on_spark01.sh` — Harden SSH.
+
+### Updating a Spark (OS + firmware)
+
+```bash
+cd dgx-spark
+./09_a_update_spark01.sh   # for spark01
+# or
+./09_b_update_spark02.sh   # for spark02
+```
+
+This uploads `maintenance/01_update_spark.sh` to `~/scripts/maintenance/` on the
+target Spark, then runs it via `ssh -t` with `sudo`. The sequence (per the
+[NVIDIA DGX Spark User Guide](https://docs.nvidia.com/dgx/dgx-spark/os-and-component-update.html)):
+
+```
+sudo apt update
+sudo apt dist-upgrade      # required: GPU driver is baked into the NVIDIA kernel
+sudo fwupdmgr refresh
+sudo fwupdmgr upgrade
+sudo reboot                # prompts for confirmation
+```
+
+`dist-upgrade` (not plain `upgrade`) is required because the DGX Spark's GPU driver
+modules are compiled into the custom kernel and must be upgraded atomically.
+The script prompts before executing and before rebooting. After the reboot your
+SSH session drops (expected) — reconnect in ~2–5 minutes.
+
