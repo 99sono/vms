@@ -21,7 +21,8 @@ This repository is used to keep track of Virtual Machines (VMs), providing a cen
     - `01_update_spark.sh`: The full DGX Spark update sequence (apt + firmware + reboot).
     - `02_cap_gpu_clock.sh`: Cap/reset/status the GPU graphics clock for thermal control (see below).
     - `03_persist_gpu_clock_cap.sh`: Install/remove the systemd unit so the clock cap survives reboots.
-    - `04_audit_gpu_clock_cap.sh`: Verify the unit is installed/enabled/active and the cap is in effect.
+    - `04_audit_gpu_clock_cap.sh`: Verify the unit is installed/enabled/active and the cap is applied.
+    - `05_diagnose_gpu_clock_cap.sh`: One-off diagnostic that dumps clock data to confirm the lock (ends with the cap applied).
     - `systemd/nvidia-clock-cap.service`: Static unit copied by `03` (never hand-edited with `nano`).
 
 ### Naming convention

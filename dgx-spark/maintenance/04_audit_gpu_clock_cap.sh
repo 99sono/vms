@@ -6,16 +6,16 @@ set -uo pipefail
 # ==============================================================================
 # WHY
 #   A single "is everything correct?" check that works whether or not you used
-#   03_persist_gpu_clock_cap.sh. It inspects three layers and reports each:
+#   03_persist_gpu_clock_cap.sh. It inspects four layers and reports each:
 #
 #     [1] Unit installed  — the .service file is present in /etc/systemd/system
 #     [2] Service enabled — enabled at boot (survives reboots)
-#     [3] Service active  — running right now
-#     [4] Cap in effect   — the GPU's max graphics clock is at/below your cap
+#     [3] Service active  — the unit ran successfully (cap applied at boot)
+#     [4] Cap in effect   — established by [3] (see NOTE) + optional journal proof
 #
 # VERDICT / EXIT CODES
-#   0  fully good     — persistent AND the cap is live
-#   2  live, not pers — cap is in effect now but will NOT survive a reboot
+#   0  fully good     — persistent AND the cap was applied
+#   2  live, not pers — cap applied now but will NOT survive a reboot
 #                        (run 03_persist_gpu_clock_cap.sh install)
 #   1  broken         — the cap is not in effect
 #
@@ -23,11 +23,23 @@ set -uo pipefail
 #   bash 04_audit_gpu_clock_cap.sh
 #   MAX_CLOCK=2000 bash 04_audit_gpu_clock_cap.sh   # audit against a custom cap
 #
-# NOTE on the "cap in effect" check
-#   We read `clocks.max.graphics` (the GPU's current max graphics clock). After
-#   `nvidia-smi -lgc 0,<cap>` this should read at-or-below the cap. If the driver
-#   instead reports the physical hardware max, treat the value below as a hint
-#   and confirm with the raw `nvidia-smi -q -d CLOCK` section we print.
+# NOTE on the "cap in effect" check  (important — read this)
+#   On the DGX Spark (GB10, driver 580.x) there is NO nvidia-smi query field that
+#   reads back the `-lgc` lock: `clocks.max.graphics` reports the hardware max
+#   (e.g. 3003) and `clocks.applications.graphics` the factory app clock (2418),
+#   NOT the 2200 lock. So we do NOT compare any clock reading against the cap —
+#   that check would always be a false negative.
+#
+#   Instead, "cap in effect" is established by the fact that this unit is
+#   Type=oneshot + RemainAfterExit=yes: `systemctl is-active` returns "active"
+#   only if the ExecStart (`sudo nvidia-smi -lgc 0,<cap>`) ran to completion. A
+#   failed run shows "failed". And `-lgc` persists until reboot or `-rgc`, so
+#   "active since boot" == "cap currently in effect". (A manual
+#   `02_cap_gpu_clock.sh reset` would clear the cap without changing unit state.)
+#
+#   As extra proof, if passwordless sudo is available the audit also prints the
+#   most recent "GPU clocks set to (gpuClkMin 0, gpuClkMax N)" journal line. The
+#   verdict does NOT depend on sudo.
 # ==============================================================================
 
 EXPECTED_CAP="${MAX_CLOCK:-2200}"
@@ -52,7 +64,7 @@ echo "============================================================"
 echo "  DGX Spark GPU Clock Cap — Audit"
 echo "============================================================"
 echo "  Host:       $(hostname)"
-echo "  Expected:   max graphics clock <= ${EXPECTED_CAP} MHz"
+echo "  Target cap: ${EXPECTED_CAP} MHz (via nvidia-smi -lgc 0,${EXPECTED_CAP})"
 echo "============================================================"
 echo ""
 
@@ -86,20 +98,35 @@ else
 fi
 
 # --- [4] cap in effect ---
-MAX_GRAPHICS="$(nvidia-smi --query-gpu=clocks.max.graphics --format=csv,noheader,nounits 2>/dev/null | awk 'NR==1{print $1}')"
+# GB10 exposes no query field for the -lgc lock, so we do NOT compare a clock
+# reading against the cap (that would always be a false negative). Instead:
+#   * current graphics clock is shown for reference only (it's ~200 MHz at idle);
+#   * if passwordless sudo is available we print the most recent "gpuClkMax"
+#     journal line as concrete proof of what the unit applied;
+#   * CAP_LIVE is set by [3]: "service active" == the oneshot ExecStart
+#     (nvidia-smi -lgc 0,cap) completed successfully == cap applied at boot.
 CURRENT_GRAPHICS="$(nvidia-smi --query-gpu=clocks.current.graphics --format=csv,noheader,nounits 2>/dev/null | awk 'NR==1{print $1}')"
 echo ""
-echo "  GPU clocks: max_graphics=${MAX_GRAPHICS:-?} MHz | current_graphics=${CURRENT_GRAPHICS:-?} MHz"
-echo "  --- nvidia-smi -q -d CLOCK (Max Clocks section) ---"
-nvidia-smi -q -d CLOCK 2>/dev/null | awk '/^Max Clocks/{f=1;print;next} /^[A-Z]/{f=0} f' | sed 's/^/    /'
-echo ""
+echo "  GPU current graphics clock: ${CURRENT_GRAPHICS:-?} MHz (reference only — ~200 MHz at idle)"
 
-if [[ "$MAX_GRAPHICS" =~ ^[0-9]+$ ]] && [ "$MAX_GRAPHICS" -le "$EXPECTED_CAP" ]; then
+JOURNAL_LINE=""
+if command -v sudo >/dev/null 2>&1; then
+    JOURNAL_LINE="$(sudo -n journalctl -u "$UNIT_NAME" --no-pager 2>/dev/null \
+        | grep -Eo 'GPU clocks set to \("[^)]*\)' | tail -n 1)"
+fi
+if [ -n "$JOURNAL_LINE" ]; then
+    echo "  Journal (sudo): ${JOURNAL_LINE}"
+else
+    echo "  Journal (sudo): not read (no passwordless sudo, or unit has not run)."
+    echo "    To see it:  sudo journalctl -u $UNIT_NAME --no-pager | grep gpuClkMax"
+fi
+
+if [ "${UNIT_PRESENT:-0}" -eq 1 ] && [ "${ACTIVE:-}" = "active" ]; then
     CAP_LIVE=1
-    mark PASS "cap in effect" "max graphics clock ${MAX_GRAPHICS} MHz <= cap ${EXPECTED_CAP} MHz"
+    mark PASS "cap in effect" "service active ⇒ -lgc 0,${EXPECTED_CAP} applied at boot (persists until reboot)"
 else
     CAP_LIVE=0
-    mark FAIL "cap in effect" "max graphics clock '${MAX_GRAPHICS:-?}' MHz is not <= cap ${EXPECTED_CAP} MHz"
+    mark FAIL "cap in effect" "not confirmed — service not active (cap not applied this boot)"
 fi
 
 echo ""
@@ -116,7 +143,7 @@ if [ "$FAIL" -gt 0 ]; then
         echo "============================================================"
         exit 1
     fi
-    echo "  VERDICT: PARTIAL — cap is live but the systemd persistence is incomplete."
+    echo "  VERDICT: PARTIAL — cap is applied but the systemd persistence is incomplete."
     echo "            See the [FAIL] lines above (likely a missing/failed unit)."
     echo "============================================================"
     exit 1

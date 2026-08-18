@@ -88,15 +88,31 @@ No systemd unit is created here — persistence is a separate, explicit step (`0
 
 ### `04_audit_gpu_clock_cap.sh`
 
-**Purpose:** Verifies the persistence setup is healthy and the cap is actually in
-effect. Safe to run anytime (no changes made).
+**Purpose:** Verifies the persistence setup is healthy and the cap is applied.
+Safe to run anytime (no changes made). Works with or without passwordless sudo.
 
 **Usage (on the Spark, or over `ssh`):**
-- `bash 04_audit_gpu_clock_cap.sh [MHz]`
-- Checks: unit present, enabled, active, `ExecStart` value, and the live
-  `clocks.max.graphics` / `clocks.current.graphics`.
-- Exit codes: `0` = healthy, `1` = degraded (unit missing/disabled/inactive or
-  cap not detected), `2` = broken (nvidia-smi missing or clock query failed).
+- `bash 04_audit_gpu_clock_cap.sh`   (optionally `MAX_CLOCK=<mhz>` to audit a custom cap)
+- Checks: unit present → enabled → **active** (active ⇒ the `-lgc` ran at boot) →
+  cap in effect. Prints the current graphics clock (reference) and, if passwordless
+  sudo is available, the most recent `gpuClkMax` journal line as proof.
+- Exit codes: `0` = GOOD (in effect + persistent), `1` = BROKEN/PARTIAL (cap not
+  applied, or persistence incomplete), `2` = live but not persistent.
+
+> **GB10 note:** there is *no* `nvidia-smi` query field that reads back the `-lgc`
+> lock (`clocks.max.graphics` shows the hardware max, e.g. 3003). The audit
+> therefore treats **`service active`** as the "cap in effect" signal — a
+> `oneshot`+`RemainAfterExit` unit is only `active` if its `ExecStart` completed.
+
+### `05_diagnose_gpu_clock_cap.sh`
+
+**Purpose:** One-off diagnostic (not part of normal operation). Dumps many clock
+fields in three states (current / unlocked via `-rgc` / locked via `-lgc`) plus the
+full `nvidia-smi -q -d CLOCK` section and the unit journal, to confirm which field
+(if any) reflects the lock on a given driver. **Ends with the cap applied.**
+
+**Usage (on the Spark):**
+- `bash 05_diagnose_gpu_clock_cap.sh [MHz]`   (asks for sudo at the first toggle)
 
 ### `systemd/nvidia-clock-cap.service`
 
@@ -119,7 +135,8 @@ dgx-spark/
     ├── 01_update_spark.sh          ← remote, recurring (full OS + firmware update)
     ├── 02_cap_gpu_clock.sh         ← remote, recurring (thermal clock cap)
     ├── 03_persist_gpu_clock_cap.sh ← remote, recurring (install/uninstall systemd unit)
-    ├── 04_audit_gpu_clock_cap.sh   ← remote, recurring (verify persistence + live cap)
+    ├── 04_audit_gpu_clock_cap.sh    ← remote, recurring (verify persistence + cap applied)
+    ├── 05_diagnose_gpu_clock_cap.sh ← remote, one-off (dump clock data; ends capped)
     └── systemd/
         └── nvidia-clock-cap.service ← static unit, copied by 03
 ```
