@@ -1,25 +1,31 @@
-# `scripts/` — Remote VM Configuration Scripts
+# `scripts/` & `maintenance/` — Remote-VM Scripts
 
-## Purpose
+These directories hold **remote-side scripts** — standalone shell scripts that get
+uploaded to a DGX Spark and executed *there* (over SSH), not run locally on your
+laptop.
 
-This directory contains **remote VM configuration scripts** — standalone shell scripts designed to be uploaded to and executed on remote VMs, not run locally.
+## Separation of concerns
 
-## Separation of Concerns
+| Type | Lives in | Example | Role |
+|------|----------|---------|------|
+| **Local wrapper** | `dgx-spark/` | `05_a_disable_password_auth_on_spark01.sh` | Handles SCP upload, `ssh` execution, user confirmation, exit-code handling |
+| **Remote script (one-off)** | `dgx-spark/scripts/` | `disable_passwords.sh` | Runs on the VM for a one-time configuration change |
+| **Remote script (recurring)** | `dgx-spark/maintenance/` | `01_update_spark.sh` | Runs on the VM for repeatable maintenance (e.g. system updates) |
 
-| Type | Example | Purpose |
-|------|---------|---------|
-| **Local Wrapper** | `../05_disable_password_auth.sh` | Handles SCP upload, SSH execution, user confirmation |
-| **Remote Script** | `disable_passwords.sh` | Runs on the VM, performs actual configuration changes |
+The local wrapper resolves which Spark to target from its filename (see
+`_common.sh`), uploads the matching remote script, and runs it.
 
-## Scripts
+## `scripts/`
 
 ### `disable_passwords.sh`
 
-**Purpose:** Hardens SSH by disabling password-based authentication, leaving only public-key login enabled.
+**Purpose:** Hardens SSH by disabling password-based authentication, leaving only
+public-key login enabled.
 
 **Usage:**
-- **Do NOT run directly.** This script is meant to be uploaded and executed by the companion wrapper `../05_disable_password_auth.sh`.
-- The wrapper handles SCP upload, SSH execution with sudo, and cleanup.
+- **Do NOT run directly.** It is uploaded and executed by the companion wrappers
+  `../05_a_disable_password_auth_on_spark01.sh` / `../05_b_disable_password_auth_on_spark02.sh`.
+- The wrapper handles SCP upload, SSH execution with `sudo`, and post-run cleanup.
 
 **What it does on the remote VM:**
 1. Verifies `~/.ssh/authorized_keys` is not empty (prevents lockout)
@@ -31,19 +37,44 @@ This directory contains **remote VM configuration scripts** — standalone shell
 7. Validates with `sshd -t` and auto-reverts on failure
 
 **Reusability:**
-This script is designed to be reused on **any Ubuntu/Debian VM** managed by this project. Simply copy it to the `scripts/` directory of another VM's folder and create a matching `0N_*.sh` local wrapper to upload and execute it.
+Designed to run on **any Ubuntu/Debian VM** managed by this project. Copy it into
+the `scripts/` directory of another VM's folder and create a matching local wrapper.
+
+## `maintenance/`
+
+Recurring maintenance scripts that live *on* the Spark under `~/scripts/maintenance/`
+and persist between runs.
+
+### `01_update_spark.sh`
+
+**Purpose:** Full DGX Spark OS + firmware update per the
+[NVIDIA DGX Spark User Guide](https://docs.nvidia.com/dgx/dgx-spark/os-and-component-update.html):
+`apt update → apt dist-upgrade → fwupdmgr refresh → fwupdmgr upgrade → reboot`.
+
+**Usage:**
+- **Do NOT run directly.** It is uploaded and executed by
+  `../09_a_update_spark01.sh` / `../09_b_update_spark02.sh`.
+- Prompts before starting and before rebooting.
 
 ## Architecture
 
 ```
 dgx-spark/
-├── 05_disable_password_auth.sh   ← Local wrapper (handles SCP/SSH, user confirmation)
-└── scripts/
-    ├── README.md                 ← You are here
-    └── disable_passwords.sh      ← Remote script (runs on the VM)
+├── 05_a_disable_password_auth_on_spark01.sh  ← local wrapper (SCP/SSH, confirmation)
+├── 09_a_update_spark01.sh                    ← local wrapper (SCP/SSH, confirmation)
+├── _common.sh                                ← resolves target Spark from filename
+├── scripts/
+│   ├── README.md                 ← you are here
+│   └── disable_passwords.sh      ← remote, one-off (runs on the VM)
+└── maintenance/
+    └── 01_update_spark.sh        ← remote, recurring (runs on the VM)
 ```
 
-## Naming Convention
+## Naming conventions
 
-- **Local wrappers** are prefixed with `NN_` (e.g., `01_*.sh`, `05_*.sh`) for sequential execution order.
-- **Remote scripts** have no prefix — they are named by function (e.g., `disable_passwords.sh`).
+- **Local wrappers** are numbered `NN_` and come in **A/B pairs** — `_a_` targets
+  spark01, `_b_` targets spark02 (e.g. `09_a_update_spark01.sh`).
+- Each wrapper sources `_common.sh` (host resolution) and a shared `_NN_*.sh` module
+  holding the actual SCP/SSH logic.
+- **Remote scripts** have no number in `scripts/` (named by function), but use a
+  `NN_` prefix in `maintenance/` to order recurring maintenance steps.

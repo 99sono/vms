@@ -2,3 +2,6 @@
 *_private.sh
 *private.sh
 00_env_setup_private.sh
+
+# Ignore generated git diff helper output (01_b_git_diff_dump_against_origin.sh)
+SQUASH_MESSAGE_HELPER.diff

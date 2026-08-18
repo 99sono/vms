@@ -1,7 +1,10 @@
 #!/bin/bash
 # =============================================================================
-# 07_a_git_number_of_commits_ahead.sh
+# 01_a_git_number_of_commits_ahead.sh
 # =============================================================================
+# Prints how many commits the current branch is ahead of origin/master.
+# Use the number it prints to squash commits with:
+#     git rebase -i HEAD~<N>
 
 # Get the count of commits ahead of origin/master
 COUNT=$(git rev-list --count origin/master..HEAD 2>/dev/null || echo "0")
